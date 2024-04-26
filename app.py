@@ -1,4 +1,3 @@
-# app.py
 from src.package_updater import PackageUpdater
 
 
