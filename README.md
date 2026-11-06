@@ -1,72 +1,57 @@
-# PHP Composer Package Updater
+# Composer Upgrade Helper (experimental Python utility)
 
-This project provides a Python tool to automatically update the `composer.json` file in a PHP project with the latest versions of dependencies from Packagist. It aims to streamline the maintenance of PHP project dependencies, ensuring they are always up to date with the latest releases.
+A small Python learning project that reads the `require` section of a PHP project's `composer.json`, asks Packagist for newer versions, and **rewrites the file**.
 
-## Features
+**Status: experimental. This is not a safe, automatic production dependency updater.** It does not currently check Composer's dependency solver, PHP/platform compatibility, stability rules, version constraint ranges, or the project's test suite. Do not point it at a production project without a backup and a reviewable Git diff.
 
-- **Automatic Updates**: Automatically updates your `composer.json` with the latest versions of dependencies.
-- **Packagist Integration**: Fetches version information directly from Packagist, the main Composer repository.
-- **Logging and Error Handling**: Robust error handling and logging for smooth operation and troubleshooting.
+## What the current code does
 
-## Requirements
+- Reads `require` from the configured `composer.json`.
+- Skips PHP/platform extension entries beginning with `php` or `ext-`.
+- Looks up package versions using Packagist and attempts to compare them.
+- Rewrites `require` constraints using caret (`^`) versions, then saves `composer.json` in place.
+- Does **not** update `require-dev` or run `composer update`.
 
-- Python 3.6 or higher
-- `requests` library
-- `packaging` library
+**Known limitations:** Composer constraints such as `*`, `^1.2 || ^2.0`, `~1.2` and dev branches are not reliably supported by the current Python version comparison. Some inputs may fail or produce incorrect changes. The tool has no dry-run or rollback mechanism yet.
 
-## Installation
+## Local setup
 
-Clone this repository to your local machine using:
-
-```bash
-git clone https://yourrepository.com/path/to/repo.git
-```
-
-Navigate into the project directory:
+Use a current Python 3 interpreter (the repository has older pinned dependencies; upgrade them only after testing).
 
 ```bash
-cd path/to/repo
+git clone https://github.com/Thavarshan/composer-upgrade-helper.git
+cd composer-upgrade-helper
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-It's recommended to use a virtual environment for Python projects. Create and activate one with:
+## Run **only** against a disposable copy
 
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-```
+1. In a separate test directory, create a valid `composer.json` with a few simple, public PHP dependencies, or copy one from a project into a temporary Git worktree.
+2. Edit `app.py` and set `composer_file_path` to the **absolute path of that disposable file**. The checked-in default (`modified_files/composer.json`) is a placeholder and may not exist.
+3. Run:
 
-Install the required Python packages:
+   ```bash
+   python app.py
+   ```
 
-```bash
-pip install -r requirements.txt
-```
+4. Inspect the resulting JSON and `git diff`. Do not accept constraints just because the script printed an update.
+5. In a real PHP project, only after reviewing constraints and platform requirements, use `composer validate --strict`, `composer update --dry-run`, a normal `composer update` in an isolated branch, vulnerability auditing, and the project's tests before any merge.
 
-## Usage
+For production dependency management, use established Composer tools and human review until this experiment is hardened.
 
-To use the package updater, execute the `app.py` script from the command line:
+## Improvements needed before trusting automatic writes
 
-```bash
-python app.py
-```
+- Parse Composer constraints using Composer-compatible semantics instead of Python package-version rules.
+- Add explicit CLI path input, dry-run/diff output, input validation, atomic file replacement and rollback safety.
+- Preserve `require` and `require-dev` separately; do not mutate unsupported constraints.
+- Exclude or handle prereleases, aliases and platform dependencies correctly.
+- Add tests for complex constraints, version regressions, network failures, malformed JSON and file permission errors.
+- Check dependency solver compatibility and run a complete project test matrix.
 
-Make sure to adjust the `composer_file_path` in `app.py` to point to your `composer.json` file:
-
-```python
-composer_file_path = 'path/to/your/composer.json'
-```
-
-## Configuration
-
-No additional configuration is needed. However, you can customize the logging level and other settings by modifying the Python scripts directly.
-
-## How It Works
-
-The `PackageUpdater` class in `package_updater.py` reads your `composer.json`, queries Packagist for the latest versions of each package, and updates your `composer.json` file accordingly. It differentiates between PHP extensions and regular packages to only update what's necessary.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a pull request or open an issue for any bugs, feature requests, or improvements.
+Contributions are welcome through [issues](https://github.com/Thavarshan/composer-upgrade-helper/issues) and focused pull requests. Please include a fixture and a failing test for bugs.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
