@@ -1,32 +1,51 @@
+"""Command line entry point for Composer Upgrade Helper."""
+
+import argparse
+import sys
+from pathlib import Path
+
 from src.package_updater import PackageUpdater
 
 
-def main():
-    """
-    The main function to update PHP project dependencies in the composer.json file
-    to their latest versions using the PackageUpdater class. It then reports the
-    updates to the terminal.
-    """
-    # Define the path to your composer.json file.
-    composer_file_path = 'modified_files/composer.json'
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Preview compatible stable dependency updates for composer.json."
+    )
+    parser.add_argument(
+        "composer_file",
+        type=Path,
+        help="path to the target composer.json file",
+    )
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="validate the preview with Composer and atomically write it",
+    )
+    args = parser.parse_args(argv)
 
-    # Create an instance of PackageUpdater with the path to the composer.json file.
-    updater = PackageUpdater(composer_file_path)
+    try:
+        updater = PackageUpdater(args.composer_file)
+        updates = updater.update()
+        preview_diff = updater.diff()
+        if args.write and updates:
+            updater.apply()
+    except (FileNotFoundError, ValueError, OSError, RuntimeError) as error:
+        print("Error: {}".format(error), file=sys.stderr)
+        return 2
 
-    # Update the composer.json file and capture any updates made.
-    updates = updater.update()
-
-    # Check if there were any updates and report them.
     if updates:
-        print("The following packages have been updated to their latest versions:")
-        for package, version in updates.items():
-            # Print each package and its updated version.
-            print(f"{package}: ^{version}")
+        print(preview_diff, end="")
+        if args.write:
+            print("\nValidated and wrote the updates to {}.".format(args.composer_file))
+        else:
+            print("\nPreview only. Re-run with --write to apply these changes.")
     else:
-        # If no updates were made, inform the user.
-        print("All packages are already up to date.")
+        print("No compatible stable updates found.")
+
+    for package, reason in sorted(updater.skipped.items()):
+        print("Skipped {}: {}".format(package, reason))
+    return 0
 
 
 if __name__ == "__main__":
-    # Entry point of the script. Executes the main function when the script is run.
-    main()
+    sys.exit(main())
