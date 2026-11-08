@@ -1,102 +1,68 @@
+"""Small, cached client for Packagist package version metadata."""
+
+import logging
 import re
 from functools import lru_cache
-import logging
+from urllib.parse import quote
+
 import requests
-from packaging import version
+
+
+_STABLE_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$", re.IGNORECASE)
 
 
 class Packagist:
-    """
-    A client for interacting with the Packagist API to fetch PHP package information.
+    """Fetch stable release information from the Packagist API."""
 
-    Attributes:
-        logger (logging.Logger): Logger instance for logging error messages.
-        session (requests.Session): Session instance for making HTTP requests. This improves
-                                    performance by reusing TCP connections.
-    """
-
-    def __init__(self):
-        """
-        Initializes the Packagist client with a logger and a requests session.
-        """
-        self.logger = logging.getLogger(__name__)  # Initializes a logger.
-        # Creates a session to optimize network calls.
+    def __init__(self, timeout=15):
+        self.logger = logging.getLogger(__name__)
         self.session = requests.Session()
+        self.timeout = timeout
 
     def get_latest_package_version(self, name):
-        """
-        Retrieves the latest semantic version of a specified package.
-
-        Args:
-            name (str): The name of the package to query.
-
-        Returns:
-            str: The latest version of the package, adhering to semantic versioning.
-        """
+        """Return the highest stable three-part release, or ``None``."""
         versions = self.get_package_versions(name)
-        # Filters out versions that do not conform to semantic versioning.
-        semantic_versions = [ver for ver in versions if re.match(
-            r'^v?\d+(\.\d+){0,2}(-\w+)?$', ver)]
+        stable_versions = []
+        for version in versions:
+            match = _STABLE_VERSION.fullmatch(version) if isinstance(version, str) else None
+            if match:
+                stable_versions.append((tuple(int(part) for part in match.groups()), version))
 
-        # If there are stable versions available, exclude pre-releases and build metadata versions.
-        if len(semantic_versions) > 1:
-            semantic_versions = [
-                ver for ver in semantic_versions if not re.search(r'[-+]', ver)]
-
-        # Fallback to the original version list if no semantic versions are found.
-        if not semantic_versions:
-            semantic_versions = versions
-
-        # Uses the packaging.version.parse to accurately compare versions.
-        latest_version = max(
-            semantic_versions, key=lambda x: version.parse(x.replace('v', '')))
-
-        return latest_version
+        if not stable_versions:
+            return None
+        return max(stable_versions, key=lambda release: release[0])[1].lstrip("vV")
 
     def get_package_versions(self, name):
-        """
-        Fetches all available versions of a specified package.
-
-        Args:
-            name (str): The name of the package.
-
-        Returns:
-            list[str]: A list of version strings for the package.
-        """
+        """Return release names advertised by Packagist, or an empty list."""
         package_info = self.get_package_info(name)
-        if package_info is not None:
-            return list(package_info.get('versions', {}).keys())
-        return []
+        if not isinstance(package_info, dict):
+            return []
+        versions = package_info.get("versions", {})
+        if not isinstance(versions, dict):
+            return []
+        return list(versions.keys())
 
-    # Cache the results to avoid repeated API calls for the same package.
     @lru_cache(maxsize=128)
     def get_package_info(self, name):
-        """
-        Retrieves detailed information about a specified package from Packagist.
-
-        Args:
-            name (str): The name of the package.
-
-        Returns:
-            dict: A dictionary containing package information, or None if an error occurs.
-        """
+        """Fetch a package document; network and response errors fail closed."""
         try:
-            response = self.session.get(self.create_package_link(name))
-            response.raise_for_status()  # Checks for HTTP request errors.
-            return response.json().get('package')
-        except requests.RequestException as e:
-            # Logs any request exceptions.
-            self.logger.error("Error fetching package info: %s", e)
+            response = self.session.get(self.create_package_link(name), timeout=self.timeout)
+            response.raise_for_status()
+            payload = response.json()
+        except (requests.RequestException, ValueError) as error:
+            self.logger.warning("Unable to fetch Packagist package %s: %s", name, error)
             return None
 
-    def create_package_link(self, name):
-        """
-        Constructs the URL for accessing the Packagist API for a specific package.
+        if not isinstance(payload, dict):
+            self.logger.warning("Packagist returned an invalid document for %s", name)
+            return None
+        package = payload.get("package")
+        if not isinstance(package, dict):
+            self.logger.warning("Packagist response has no package object for %s", name)
+            return None
+        return package
 
-        Args:
-            name (str): The name of the package.
-
-        Returns:
-            str: The URL for the package's API endpoint on Packagist.
-        """
-        return f'https://packagist.org/packages/{name}.json'
+    @staticmethod
+    def create_package_link(name):
+        """Construct a correctly escaped Packagist package API URL."""
+        return "https://packagist.org/packages/{}.json".format(quote(name, safe="/"))
